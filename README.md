@@ -2,13 +2,46 @@
 
 ffmpeg-to-webrtc demonstrates how to send video from ffmpeg to your browser using [pion](https://github.com/pion/webrtc).
 
+This is forked from the awesome https://github.com/ashellunts/ffmpeg-to-webrtc with a few changes that I wanted:
+
+1. Streams from local file, already in proper format, rather than running ffmpeg itself
+2. Accepts ivf (vp8/9) instead of h264 formats (you can pre-format with ffmpeg outside of this)
+3. Minimal signaling server to allow to pass the SDP configs over the wire rather than cutting and pasting
+
 ## How to run it
 
+TODO: this is all obsolete
+
 ### Open example web page
-[jsfiddle.net](https://jsfiddle.net/wjo4e9c7/1/)
+
+```bash
+# go install github.com/go-serve/goserve@latest
+go install github.com/philippgille/serve@latest
+serve -d html -p 7777
+```
+
+Open [localhost:7777/test.html](http://localhost:7777/test.html)
 
 ### Copy browser's SDP
-In the jsfiddle the top textarea is your browser's SDP, copy that to clipboard.
+
+In the website the top textarea is your browser's SDP, copy that to clipboard.
+
+Open a new shell and:
+
+```bash
+cd src
+# Paste the SDP inside vi
+vi SDP.txt
+
+go run . <path/to/file.ivf> < SDP.txt
+```
+
+
+
+### Start the server
+
+the directory with the video file in it (we call it `stream.ivf` in this example)
+
 
 #### Windows
 1. `cd src`

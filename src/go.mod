@@ -1,4 +1,4 @@
-module ashellunts/main
+module ashellunts/ffmpeg-to-webrtc
 
 go 1.17
 

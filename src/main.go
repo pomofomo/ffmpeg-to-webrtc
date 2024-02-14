@@ -13,11 +13,12 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
-	"github.com/pion/webrtc/v3/pkg/media/h264reader"
+	"github.com/pion/webrtc/v3/pkg/media/ivfreader"
 )
 
 const (
-	h264FrameDuration = time.Millisecond * 33
+	// Make this variable from args to match original
+	frameDuration = time.Millisecond * 100
 )
 
 func main() { //nolint
@@ -41,7 +42,7 @@ func main() { //nolint
 	iceConnectedCtx, iceConnectedCtxCancel := context.WithCancel(context.Background())
 
 	// Create a video track
-	videoTrack, videoTrackErr := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "pion")
+	videoTrack, videoTrackErr := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
 	if videoTrackErr != nil {
 		panic(videoTrackErr)
 	}
@@ -63,16 +64,19 @@ func main() { //nolint
 		}
 	}()
 
+	if len(os.Args) != 2 {
+		fmt.Printf("Usage: ffmpeg-to-webrtc [file.ivf]")
+	}
+	dataPipe, err := os.Open(os.Args[1])
+	if err != nil {
+		fmt.Printf("Error opening %s: %s", os.Args[1], err)
+	}
+
 	go func() {
-		dataPipe, err := RunCommand("ffmpeg", os.Args[1:]...)
-
-		if err != nil {
-			panic(err)
-		}
-
-		h264, h264Err := h264reader.NewReader(dataPipe)
-		if h264Err != nil {
-			panic(h264Err)
+		ivf, ivfHeader, ivfErr := ivfreader.NewWith(dataPipe)
+		_ = ivfHeader // maybe use later?
+		if ivfErr != nil {
+			panic(ivfErr)
 		}
 
 		// Wait for connection established
@@ -84,30 +88,31 @@ func main() { //nolint
 		// It is important to use a time.Ticker instead of time.Sleep because
 		// * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
 		// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
-		spsAndPpsCache := []byte{}
-		ticker := time.NewTicker(h264FrameDuration)
+		// spsAndPpsCache := []byte{}
+		ticker := time.NewTicker(frameDuration)
 		for ; true; <-ticker.C {
-			nal, h264Err := h264.NextNAL()
-			if h264Err == io.EOF {
+			frame, frameHeader, ivfErr := ivf.ParseNextFrame()
+			_ = frameHeader
+			if ivfErr == io.EOF || frame == nil {
 				fmt.Printf("All video frames parsed and sent")
 				os.Exit(0)
 			}
-			if h264Err != nil {
-				panic(h264Err)
+			if ivfErr != nil {
+				panic(ivfErr)
 			}
 
-			nal.Data = append([]byte{0x00, 0x00, 0x00, 0x01}, nal.Data...)
+			// nal.Data = append([]byte{0x00, 0x00, 0x00, 0x01}, nal.Data...)
 
-			if nal.UnitType == h264reader.NalUnitTypeSPS || nal.UnitType == h264reader.NalUnitTypePPS {
-				spsAndPpsCache = append(spsAndPpsCache, nal.Data...)
-				continue
-			} else if nal.UnitType == h264reader.NalUnitTypeCodedSliceIdr {
-				nal.Data = append(spsAndPpsCache, nal.Data...)
-				spsAndPpsCache = []byte{}
-			}
+			// if nal.UnitType == h264reader.NalUnitTypeSPS || nal.UnitType == h264reader.NalUnitTypePPS {
+			// 	spsAndPpsCache = append(spsAndPpsCache, nal.Data...)
+			// 	continue
+			// } else if nal.UnitType == h264reader.NalUnitTypeCodedSliceIdr {
+			// 	nal.Data = append(spsAndPpsCache, nal.Data...)
+			// 	spsAndPpsCache = []byte{}
+			// }
 
-			if h264Err = videoTrack.WriteSample(media.Sample{Data: nal.Data, Duration: time.Second}); h264Err != nil {
-				panic(h264Err)
+			if ivfErr = videoTrack.WriteSample(media.Sample{Data: frame, Duration: frameDuration}); ivfErr != nil {
+				panic(ivfErr)
 			}
 		}
 	}()
