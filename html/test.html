@@ -5,6 +5,7 @@
 	</head>
 		<script>
 				/* eslint-env browser */
+				let signalling = "http://localhost:9999"
 
 				let pc = new RTCPeerConnection({
 				  iceServers: [{
@@ -12,10 +13,11 @@
 				  }]
 				})
 				let log = msg => {
-				  document.getElementById('div').innerHTML += msg + '<br>'
+				  document.getElementById('logs').innerHTML += msg + '<br>'
 				}
 
 				pc.ontrack = function(event) {
+					log("ontrack")
 				  var el = document.createElement(event.track.kind)
 				  el.srcObject = event.streams[0]
 				  el.autoplay = true
@@ -24,11 +26,10 @@
 				  document.getElementById('remoteVideos').appendChild(el)
 				}
 
-				pc.oniceconnectionstatechange = e => log(pc.iceConnectionState)
+				pc.oniceconnectionstatechange = e => log(`Conn state: ${pc.iceConnectionState}`);
 				pc.onicecandidate = event => {
-				  if (event.candidate === null) {
-					document.getElementById('localSessionDescription').value = btoa(JSON.stringify(pc.localDescription))
-				  }
+					log("onicecandidate");
+					log(JSON.stringify(event));
 				}
 
 				// Offer to receive 1 audio, and 1 video track
@@ -39,51 +40,41 @@
 				  'direction': 'sendrecv'
 				})
 
-				pc.createOffer().then(d => pc.setLocalDescription(d)).catch(log)
-
 				window.startSession = () => {
-				  let sd = document.getElementById('remoteSessionDescription').value
-				  if (sd === '') {
-					return alert('Session Description must not be empty')
-				  }
+					fetch(`${signalling}/offer`).then((res) => {
+						if (!res.ok) {
+							throw Error(res.statusText);
+						}
+						res.text().then((offer) => {
+							log("offer");
+							log(offer);
 
-				  try {
-					pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(atob(sd))))
-				  } catch (e) {
-					alert(e)
-				  }
-				}
-
-				window.copySDP = () => {
-				  let browserSDP = document.getElementById('localSessionDescription')
-
-				  browserSDP.focus();
-				  browserSDP.select();
-
-				  try {
-					var successful = document.execCommand('copy');
-					var msg = successful ? 'successful' : 'unsuccessful';
-					log('Copying SDP was ' + msg);
-				  } catch (err) {
-					log('Oops, unable to copy SDP ' + err);
-				  }
+							let postAnswer = "";
+							// now we can generate our own local value 
+							pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(atob(offer)))).then(() => {
+								pc.createAnswer().then((answer) => {
+									postAnswer = btoa(JSON.stringify(answer));
+									log("answer");
+									log(postAnswer);
+									return pc.setLocalDescription(answer);
+								})
+								.then(() =>
+									fetch(`${signalling}/connect`, {
+										method: 'POST',
+										body: postAnswer,
+									})
+								).then((res) => {
+									if (!res.ok) {
+										throw Error(res.statusText);
+									}
+									log("Answer properly posted")
+								})
+							});
+						})
+					});
 				}
 		</script>
 	<body>
-			Browser SDP
-			<br />
-			<textarea id="localSessionDescription" readonly="true"></textarea>
-			<br />
-			<button onclick="window.copySDP()">
-			  Copy browser SDP to clipboard
-			</button>
-
-			<br />
-			<br />
-			<br />
-
-			Application SDP<br />
-			<textarea id="remoteSessionDescription"></textarea> <br />
 			<button onclick="window.startSession()"> Start Session </button><br />
 
 			<br />
@@ -92,6 +83,6 @@
 			<div id="remoteVideos"></div> <br />
 
 			Logs<br />
-			<div id="div"></div>
+			<div id="logs"></div>
 	</body>
 </html>
