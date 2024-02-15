@@ -18,7 +18,7 @@ go install github.com/philippgille/serve@latest
 serve -d html -p 7777
 ```
 
-Open [localhost:7777/test.html](http://localhost:7777/test.html)
+Open [localhost:7777](http://localhost:7777)
 
 ### Copy browser's SDP
 
