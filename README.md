@@ -29,14 +29,12 @@ cd src
 go run . <path/to/file.ivf>
 ```
 
-You can test this in another shell via `curl localhost:9999/offer`
-
 ### Connect the browser
 
-Copy the string on terminal to the clipboard, and paste it in the website
+One you see "Ready" in logs, click on "Start Session".
 
 Now you see the video
 
 ## Operating Systems
 
-I only tested this on Ubuntu Linux. I *should* work on MacOS
+I only tested this on Ubuntu Linux. It *should* work on MacOS

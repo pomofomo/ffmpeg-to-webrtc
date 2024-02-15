@@ -29,7 +29,7 @@
 				pc.oniceconnectionstatechange = e => log(`Conn state: ${pc.iceConnectionState}`);
 				pc.onicecandidate = event => {
 					log("onicecandidate");
-					log(JSON.stringify(event));
+					// log(JSON.stringify(event));
 				}
 
 				// Offer to receive 1 audio, and 1 video track
