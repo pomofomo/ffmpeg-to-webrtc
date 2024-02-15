@@ -7,17 +7,17 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-
-	"github.com/pion/webrtc/v3"
 )
 
 type ServerConfig struct {
-	Port  int
-	Offer webrtc.SessionDescription
+	Port int
+	// This is where we get answers (gets one value for every offer)
+	Answers chan string
+	// This is where the server sends offers
+	Offers chan string
 }
 
 func enableCors(w http.ResponseWriter) {
@@ -25,23 +25,18 @@ func enableCors(w http.ResponseWriter) {
 }
 
 // HTTPSDPServer starts a HTTP Server that consumes SDPs
-func HTTPSDPServer(config ServerConfig) chan string {
-	offerStr := Encode(config.Offer)
+func HTTPSDPServer(config ServerConfig) {
 	port := config.Port
 	if port == 0 {
 		port = 9999
 	}
 
-	sdpChan := make(chan string)
-	http.HandleFunc("/offer", func(w http.ResponseWriter, r *http.Request) {
-		enableCors(w)
-		w.Write([]byte(offerStr))
-	})
 	http.HandleFunc("/connect", func(w http.ResponseWriter, r *http.Request) {
 		enableCors(w)
 		body, _ := io.ReadAll(r.Body)
-		fmt.Fprintf(w, "done")
-		sdpChan <- string(body)
+		config.Offers <- string(body)
+		answer := <-config.Answers
+		w.Write([]byte(answer))
 	})
 
 	go func() {
@@ -50,6 +45,4 @@ func HTTPSDPServer(config ServerConfig) chan string {
 			panic(err) //nolint
 		}
 	}()
-
-	return sdpChan
 }

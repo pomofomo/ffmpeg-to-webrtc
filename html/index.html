@@ -40,40 +40,64 @@
 				  'direction': 'sendrecv'
 				})
 
+				pc.createOffer()
+					.then(d => pc.setLocalDescription(d))
+					.then(() => log('Ready'))
+					.catch(log);
+
 				window.startSession = () => {
-					fetch(`${signalling}/offer`).then((res) => {
+					const offer = btoa(JSON.stringify(pc.localDescription));
+					fetch(`${signalling}/connect`, {
+							method: 'POST',
+							body: offer,
+					})
+					.then((res) => {
 						if (!res.ok) {
 							throw Error(res.statusText);
 						}
-						res.text().then((offer) => {
-							log("offer");
-							log(offer);
-
-							let postAnswer = "";
-							// now we can generate our own local value 
-							pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(atob(offer)))).then(() => {
-								pc.createAnswer().then((answer) => {
-									postAnswer = btoa(JSON.stringify(answer));
-									log("answer");
-									log(postAnswer);
-									return pc.setLocalDescription(answer);
-								})
-								.then(() =>
-									fetch(`${signalling}/connect`, {
-										method: 'POST',
-										body: postAnswer,
-									})
-								).then((res) => {
-									if (!res.ok) {
-										throw Error(res.statusText);
-									}
-									log("Answer properly posted")
-								})
-							});
-						})
-					});
+						return res.text();
+					})
+					.then((answer) => {
+						const d = new RTCSessionDescription(JSON.parse(atob(answer)));
+						return pc.setRemoteDescription(d);
+					})
+					.catch((e) => log(`Connection error: ${e}`));
 				}
-		</script>
+
+				// window.startSession = () => {
+				// 	fetch(`${signalling}/offer`).then((res) => {
+				// 		if (!res.ok) {
+				// 			throw Error(res.statusText);
+				// 		}
+				// 		res.text().then((offer) => {
+				// 			log("offer");
+				// 			log(offer);
+
+				// 			let postAnswer = "";
+				// 			// now we can generate our own local value 
+				// 			pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(atob(offer)))).then(() => {
+				// 				pc.createAnswer().then((answer) => {
+				// 					postAnswer = btoa(JSON.stringify(answer));
+				// 					log("answer");
+				// 					log(postAnswer);
+				// 					return pc.setLocalDescription(answer);
+				// 				})
+				// 				.then(() =>
+				// 					fetch(`${signalling}/connect`, {
+				// 						method: 'POST',
+				// 						body: postAnswer,
+				// 					})
+				// 				).then((res) => {
+				// 					if (!res.ok) {
+				// 						throw Error(res.statusText);
+				// 					}
+				// 					log("Answer properly posted")
+				// 				})
+				// 			});
+				// 		})
+				// 	});
+				// }
+	</script>
 	<body>
 			<button onclick="window.startSession()"> Start Session </button><br />
 

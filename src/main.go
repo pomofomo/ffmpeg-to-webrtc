@@ -116,8 +116,7 @@ func main() { //nolint
 		}
 	}()
 
-	// Handshake inspired by https://github.com/pion/example-webrtc-applications/blob/master/gstreamer-send-offer/main.go
-	// Where the server makes the offer and the client gets it and provides and answer
+	// Server waits for client to make offer and responds with an answer
 
 	// Set the handler for ICE connection state
 	// This will notify you when the peer has connected/disconnected
@@ -142,7 +141,29 @@ func main() { //nolint
 		}
 	})
 
-	offer, err := peerConnection.CreateOffer(nil)
+	// At this point we are "ready". Now we publish this offer on our local server
+	// And wait for a response
+	config := ServerConfig{
+		Port:    9999,
+		Offers:  make(chan string),
+		Answers: make(chan string),
+	}
+	HTTPSDPServer(config)
+	fmt.Println("Serving on :9999 waiting for connection...")
+
+	// get offer from first client
+	offer := webrtc.SessionDescription{}
+	Decode(<-config.Offers, &offer)
+	fmt.Println(offer.Type)
+	// fmt.Println(offer.SDP)
+
+	// Set the remote SessionDescription
+	if err = peerConnection.SetRemoteDescription(offer); err != nil {
+		panic(err)
+	}
+
+	// Create answer
+	answer, err := peerConnection.CreateAnswer(nil)
 	if err != nil {
 		panic(err)
 	}
@@ -151,7 +172,7 @@ func main() { //nolint
 	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 
 	// Sets the LocalDescription, and starts our UDP listeners
-	if err = peerConnection.SetLocalDescription(offer); err != nil {
+	if err = peerConnection.SetLocalDescription(answer); err != nil {
 		panic(err)
 	}
 
@@ -160,29 +181,12 @@ func main() { //nolint
 	// in a production application you should exchange ICE Candidates via OnICECandidate
 	<-gatherComplete
 
-	// show the offer
-	fmt.Println(offer.Type)
-	fmt.Println(offer.SDP)
-
-	// At this point we are "ready". Now we publish this offer on our local server
-	// And wait for a response
-	sdpChan := HTTPSDPServer(ServerConfig{
-		Offer: offer,
-		Port:  9999,
-	})
-	fmt.Println("Serving on :9999 waiting for connection...")
-	answer := webrtc.SessionDescription{}
-	Decode(<-sdpChan, &answer)
-
-	// show the offer
-	fmt.Println("")
+	// send answer to server
+	// fmt.Println("\nReturning answer")
 	fmt.Println(answer.Type)
-	fmt.Println(answer.SDP)
-
-	// Set the remote SessionDescription
-	if err = peerConnection.SetRemoteDescription(answer); err != nil {
-		panic(err)
-	}
+	// fmt.Println(answer.SDP)
+	sdp := Encode(answer)
+	config.Answers <- sdp
 
 	// Block forever
 	select {}
