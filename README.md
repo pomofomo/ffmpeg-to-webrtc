@@ -7,6 +7,7 @@ This is forked from the awesome https://github.com/ashellunts/ffmpeg-to-webrtc w
 1. Streams from local file, already in proper format, rather than running ffmpeg itself
 2. Accepts ivf (vp8/9) instead of h264 formats (you can pre-format with ffmpeg outside of this)
 3. Minimal signaling server to allow to pass the SDP configs over the wire rather than cutting and pasting
+4. Allow multiple clients to subscribe to the stream at the same time
 
 ## How to run it
 
