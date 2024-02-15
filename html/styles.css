@@ -2,3 +2,13 @@ textarea {
     width: 500px;
     min-height: 75px;
 }
+
+#remoteVideos {
+    background-color: black;
+}
+
+#remoteVideos video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}

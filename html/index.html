@@ -23,7 +23,8 @@
 				  el.autoplay = true
 				  el.controls = true
 
-				  document.getElementById('remoteVideos').appendChild(el)
+				  document.getElementById('remoteVideos').appendChild(el);
+				  document.getElementById('setup').remove();
 				}
 
 				pc.oniceconnectionstatechange = e => log(`Conn state: ${pc.iceConnectionState}`);
@@ -99,11 +100,10 @@
 				// }
 	</script>
 	<body>
-			<button onclick="window.startSession()"> Start Session </button><br />
-
-			<br />
-
-			Video<br />
+			<div id="setup">
+				<button onclick="window.startSession()"> Start Session </button><br />
+				Video<br />
+			</div>
 			<div id="remoteVideos"></div> <br />
 
 			Logs<br />

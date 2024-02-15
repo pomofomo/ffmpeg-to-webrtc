@@ -16,7 +16,7 @@ import (
 
 const (
 	// Make this variable from args to match original
-	frameDuration = time.Millisecond * 100
+	frameDuration = time.Millisecond * 80
 )
 
 func main() { //nolint
