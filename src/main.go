@@ -44,102 +44,107 @@ func main() { //nolint
 	HTTPSDPServer(config)
 	fmt.Println("Serving on :9999 waiting for connection...")
 
-	// loop forever adding new connections
+	// perpare to handle all connections
 	conns := 0
+	peers := []*webrtc.PeerConnection{}
+	defer func() {
+		for i, p := range peers {
+			if cErr := p.Close(); cErr != nil {
+				fmt.Printf("cannot close peerConnection %d: %v\n", i, cErr)
+			}
+		}
+	}()
+
+	// loop forever adding new connections
 	for {
 		conns += 1
-		myConn := conns
-
-		// Create a new RTCPeerConnection
-		peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
-			ICEServers: []webrtc.ICEServer{
-				{
-					URLs: []string{"stun:stun.l.google.com:19302"},
-				},
-			},
-		})
+		peer, err := addConnection(&config, videoTrack, conns)
 		if err != nil {
 			panic(err)
 		}
-		defer func() {
-			if cErr := peerConnection.Close(); cErr != nil {
-				fmt.Printf("cannot close peerConnection %d: %v\n", myConn, cErr)
-			}
-		}()
-
-		rtpSender, videoTrackErr := peerConnection.AddTrack(videoTrack)
-		if videoTrackErr != nil {
-			panic(videoTrackErr)
-		}
-
-		// Read incoming RTCP packets
-		// Before these packets are returned they are processed by interceptors. For things
-		// like NACK this needs to be called.
-		go func() {
-			rtcpBuf := make([]byte, 1500)
-			for {
-				if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-					return
-				}
-			}
-		}()
-
-		// Set the handler for ICE connection state
-		// This will notify you when the peer has connected/disconnected
-		peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-			fmt.Printf("Connection %d State has changed %s \n", myConn, connectionState.String())
-		})
-
-		// Set the handler for Peer connection state
-		// This will notify you when the peer has connected/disconnected
-		peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-			fmt.Printf("Peer Connection %d State has changed: %s\n", myConn, s.String())
-
-			if s == webrtc.PeerConnectionStateFailed {
-				// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-				// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-				// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-				fmt.Printf("Peer Connection %d has gone to failed exiting\n", myConn)
-				os.Exit(0)
-			}
-		})
-
-		// get offer from first client
-		offer := webrtc.SessionDescription{}
-		Decode(<-config.Offers, &offer)
-		fmt.Println(offer.Type)
-
-		// Set the remote SessionDescription
-		if err := peerConnection.SetRemoteDescription(offer); err != nil {
-			panic(err)
-		}
-
-		// Create answer
-		answer, err := peerConnection.CreateAnswer(nil)
-		if err != nil {
-			panic(err)
-		}
-
-		// Create channel that is blocked until ICE Gathering is complete
-		gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
-
-		// Sets the LocalDescription, and starts our UDP listeners
-		if err = peerConnection.SetLocalDescription(answer); err != nil {
-			panic(err)
-		}
-
-		// Block until ICE Gathering is complete, disabling trickle ICE
-		// we do this because we only can exchange one signaling message
-		// in a production application you should exchange ICE Candidates via OnICECandidate
-		<-gatherComplete
-
-		// send answer to server
-		// fmt.Println("\nReturning answer")
-		fmt.Println(answer.Type)
-		// fmt.Println(answer.SDP)
-		sdp := Encode(answer)
-		config.Answers <- sdp
+		peers = append(peers, peer)
 	}
+}
+
+func addConnection(config *ServerConfig, videoTrack *webrtc.TrackLocalStaticSample, myConn int) (*webrtc.PeerConnection, error) {
+	// Create a new RTCPeerConnection
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	rtpSender, err := peerConnection.AddTrack(videoTrack)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read incoming RTCP packets
+	// Before these packets are returned they are processed by interceptors. For things
+	// like NACK this needs to be called.
+	go func() {
+		rtcpBuf := make([]byte, 1500)
+		for {
+			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
+				return
+			}
+		}
+	}()
+
+	// Set the handler for ICE connection state
+	// This will notify you when the peer has connected/disconnected
+	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
+		fmt.Printf("Connection %d State has changed %s \n", myConn, connectionState.String())
+	})
+
+	// Set the handler for Peer connection state
+	// This will notify you when the peer has connected/disconnected
+	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		fmt.Printf("Peer Connection %d State has changed: %s\n", myConn, s.String())
+	})
+
+	// get offer from first client
+	offer := webrtc.SessionDescription{}
+	Decode(<-config.Offers, &offer)
+	fmt.Println(offer.Type)
+
+	// Set the remote SessionDescription
+	if err = peerConnection.SetRemoteDescription(offer); err != nil {
+		return nil, err
+	}
+
+	// Create answer
+	answer, err := peerConnection.CreateAnswer(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create channel that is blocked until ICE Gathering is complete
+	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+
+	// Sets the LocalDescription, and starts our UDP listeners
+	if err = peerConnection.SetLocalDescription(answer); err != nil {
+		return nil, err
+	}
+
+	// Block until ICE Gathering is complete, disabling trickle ICE
+	// we do this because we only can exchange one signaling message
+	// in a production application you should exchange ICE Candidates via OnICECandidate
+	<-gatherComplete
+
+	// send answer to server
+	// fmt.Println("\nReturning answer")
+	fmt.Println(answer.Type)
+	// fmt.Println(answer.SDP)
+	sdp := Encode(answer)
+	config.Answers <- sdp
+
+	return peerConnection, nil
 }
 
 func serveVideo(filename string, videoTrack *webrtc.TrackLocalStaticSample) {
