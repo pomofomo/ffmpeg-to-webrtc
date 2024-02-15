@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -37,8 +36,6 @@ func main() { //nolint
 			fmt.Printf("cannot close peerConnection: %v\n", cErr)
 		}
 	}()
-
-	iceConnectedCtx, iceConnectedCtxCancel := context.WithCancel(context.Background())
 
 	// Create a video track
 	videoTrack, videoTrackErr := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
@@ -78,9 +75,6 @@ func main() { //nolint
 			panic(ivfErr)
 		}
 
-		// Wait for connection established
-		<-iceConnectedCtx.Done()
-
 		// Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
 		// This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
 		//
@@ -89,6 +83,7 @@ func main() { //nolint
 		// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
 		// spsAndPpsCache := []byte{}
 		ticker := time.NewTicker(frameDuration)
+		frames := 0
 		for ; true; <-ticker.C {
 			frame, frameHeader, ivfErr := ivf.ParseNextFrame()
 			_ = frameHeader
@@ -100,15 +95,10 @@ func main() { //nolint
 				panic(ivfErr)
 			}
 
-			// nal.Data = append([]byte{0x00, 0x00, 0x00, 0x01}, nal.Data...)
-
-			// if nal.UnitType == h264reader.NalUnitTypeSPS || nal.UnitType == h264reader.NalUnitTypePPS {
-			// 	spsAndPpsCache = append(spsAndPpsCache, nal.Data...)
-			// 	continue
-			// } else if nal.UnitType == h264reader.NalUnitTypeCodedSliceIdr {
-			// 	nal.Data = append(spsAndPpsCache, nal.Data...)
-			// 	spsAndPpsCache = []byte{}
-			// }
+			frames += 1
+			if frames%10 == 0 {
+				fmt.Printf("Frames: %d\n", frames)
+			}
 
 			if ivfErr = videoTrack.WriteSample(media.Sample{Data: frame, Duration: frameDuration}); ivfErr != nil {
 				panic(ivfErr)
@@ -122,9 +112,6 @@ func main() { //nolint
 	// This will notify you when the peer has connected/disconnected
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		fmt.Printf("Connection State has changed %s \n", connectionState.String())
-		if connectionState == webrtc.ICEConnectionStateConnected {
-			iceConnectedCtxCancel()
-		}
 	})
 
 	// Set the handler for Peer connection state
