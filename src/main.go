@@ -20,113 +20,19 @@ const (
 )
 
 func main() { //nolint
-	// Create a new RTCPeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
-			},
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if cErr := peerConnection.Close(); cErr != nil {
-			fmt.Printf("cannot close peerConnection: %v\n", cErr)
-		}
-	}()
-
 	// Create a video track
 	videoTrack, videoTrackErr := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
 	if videoTrackErr != nil {
 		panic(videoTrackErr)
 	}
 
-	rtpSender, videoTrackErr := peerConnection.AddTrack(videoTrack)
-	if videoTrackErr != nil {
-		panic(videoTrackErr)
-	}
-
-	// Read incoming RTCP packets
-	// Before these packets are returned they are processed by interceptors. For things
-	// like NACK this needs to be called.
-	go func() {
-		rtcpBuf := make([]byte, 1500)
-		for {
-			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-				return
-			}
-		}
-	}()
-
+	// serve video to the track
 	if len(os.Args) != 2 {
 		fmt.Printf("Usage: ffmpeg-to-webrtc [file.ivf]")
 	}
-	dataPipe, err := os.Open(os.Args[1])
-	if err != nil {
-		fmt.Printf("Error opening %s: %s", os.Args[1], err)
-	}
-
-	go func() {
-		ivf, ivfHeader, ivfErr := ivfreader.NewWith(dataPipe)
-		_ = ivfHeader // maybe use later?
-		if ivfErr != nil {
-			panic(ivfErr)
-		}
-
-		// Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
-		// This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
-		//
-		// It is important to use a time.Ticker instead of time.Sleep because
-		// * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
-		// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
-		// spsAndPpsCache := []byte{}
-		ticker := time.NewTicker(frameDuration)
-		frames := 0
-		for ; true; <-ticker.C {
-			frame, frameHeader, ivfErr := ivf.ParseNextFrame()
-			_ = frameHeader
-			if ivfErr == io.EOF || frame == nil {
-				fmt.Printf("All video frames parsed and sent")
-				os.Exit(0)
-			}
-			if ivfErr != nil {
-				panic(ivfErr)
-			}
-
-			frames += 1
-			if frames%10 == 0 {
-				fmt.Printf("Frames: %d\n", frames)
-			}
-
-			if ivfErr = videoTrack.WriteSample(media.Sample{Data: frame, Duration: frameDuration}); ivfErr != nil {
-				panic(ivfErr)
-			}
-		}
-	}()
+	go serveVideo(os.Args[1], videoTrack)
 
 	// Server waits for client to make offer and responds with an answer
-
-	// Set the handler for ICE connection state
-	// This will notify you when the peer has connected/disconnected
-	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("Connection State has changed %s \n", connectionState.String())
-	})
-
-	// Set the handler for Peer connection state
-	// This will notify you when the peer has connected/disconnected
-	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		fmt.Printf("Peer Connection State has changed: %s\n", s.String())
-
-		if s == webrtc.PeerConnectionStateFailed {
-			// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-			// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-			// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-			fmt.Println("Peer Connection has gone to failed exiting")
-			os.Exit(0)
-		}
-	})
 
 	// At this point we are "ready". Now we publish this offer on our local server
 	// And wait for a response
@@ -138,43 +44,143 @@ func main() { //nolint
 	HTTPSDPServer(config)
 	fmt.Println("Serving on :9999 waiting for connection...")
 
-	// get offer from first client
-	offer := webrtc.SessionDescription{}
-	Decode(<-config.Offers, &offer)
-	fmt.Println(offer.Type)
-	// fmt.Println(offer.SDP)
+	// loop forever adding new connections
+	conns := 0
+	for {
+		conns += 1
+		myConn := conns
 
-	// Set the remote SessionDescription
-	if err = peerConnection.SetRemoteDescription(offer); err != nil {
-		panic(err)
+		// Create a new RTCPeerConnection
+		peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+			ICEServers: []webrtc.ICEServer{
+				{
+					URLs: []string{"stun:stun.l.google.com:19302"},
+				},
+			},
+		})
+		if err != nil {
+			panic(err)
+		}
+		defer func() {
+			if cErr := peerConnection.Close(); cErr != nil {
+				fmt.Printf("cannot close peerConnection %d: %v\n", myConn, cErr)
+			}
+		}()
+
+		rtpSender, videoTrackErr := peerConnection.AddTrack(videoTrack)
+		if videoTrackErr != nil {
+			panic(videoTrackErr)
+		}
+
+		// Read incoming RTCP packets
+		// Before these packets are returned they are processed by interceptors. For things
+		// like NACK this needs to be called.
+		go func() {
+			rtcpBuf := make([]byte, 1500)
+			for {
+				if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
+					return
+				}
+			}
+		}()
+
+		// Set the handler for ICE connection state
+		// This will notify you when the peer has connected/disconnected
+		peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
+			fmt.Printf("Connection %d State has changed %s \n", myConn, connectionState.String())
+		})
+
+		// Set the handler for Peer connection state
+		// This will notify you when the peer has connected/disconnected
+		peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+			fmt.Printf("Peer Connection %d State has changed: %s\n", myConn, s.String())
+
+			if s == webrtc.PeerConnectionStateFailed {
+				// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
+				// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
+				// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
+				fmt.Printf("Peer Connection %d has gone to failed exiting\n", myConn)
+				os.Exit(0)
+			}
+		})
+
+		// get offer from first client
+		offer := webrtc.SessionDescription{}
+		Decode(<-config.Offers, &offer)
+		fmt.Println(offer.Type)
+
+		// Set the remote SessionDescription
+		if err := peerConnection.SetRemoteDescription(offer); err != nil {
+			panic(err)
+		}
+
+		// Create answer
+		answer, err := peerConnection.CreateAnswer(nil)
+		if err != nil {
+			panic(err)
+		}
+
+		// Create channel that is blocked until ICE Gathering is complete
+		gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+
+		// Sets the LocalDescription, and starts our UDP listeners
+		if err = peerConnection.SetLocalDescription(answer); err != nil {
+			panic(err)
+		}
+
+		// Block until ICE Gathering is complete, disabling trickle ICE
+		// we do this because we only can exchange one signaling message
+		// in a production application you should exchange ICE Candidates via OnICECandidate
+		<-gatherComplete
+
+		// send answer to server
+		// fmt.Println("\nReturning answer")
+		fmt.Println(answer.Type)
+		// fmt.Println(answer.SDP)
+		sdp := Encode(answer)
+		config.Answers <- sdp
 	}
+}
 
-	// Create answer
-	answer, err := peerConnection.CreateAnswer(nil)
+func serveVideo(filename string, videoTrack *webrtc.TrackLocalStaticSample) {
+	dataPipe, err := os.Open(filename)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("opening %s: %s", filename, err))
 	}
 
-	// Create channel that is blocked until ICE Gathering is complete
-	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
-
-	// Sets the LocalDescription, and starts our UDP listeners
-	if err = peerConnection.SetLocalDescription(answer); err != nil {
-		panic(err)
+	ivf, ivfHeader, ivfErr := ivfreader.NewWith(dataPipe)
+	_ = ivfHeader // maybe use later?
+	if ivfErr != nil {
+		panic(ivfErr)
 	}
 
-	// Block until ICE Gathering is complete, disabling trickle ICE
-	// we do this because we only can exchange one signaling message
-	// in a production application you should exchange ICE Candidates via OnICECandidate
-	<-gatherComplete
+	// Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
+	// This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
+	//
+	// It is important to use a time.Ticker instead of time.Sleep because
+	// * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
+	// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
+	// spsAndPpsCache := []byte{}
+	ticker := time.NewTicker(frameDuration)
+	frames := 0
+	for ; true; <-ticker.C {
+		frame, frameHeader, ivfErr := ivf.ParseNextFrame()
+		_ = frameHeader
+		if ivfErr == io.EOF || frame == nil {
+			fmt.Printf("All video frames parsed and sent")
+			os.Exit(0)
+		}
+		if ivfErr != nil {
+			panic(ivfErr)
+		}
 
-	// send answer to server
-	// fmt.Println("\nReturning answer")
-	fmt.Println(answer.Type)
-	// fmt.Println(answer.SDP)
-	sdp := Encode(answer)
-	config.Answers <- sdp
+		frames += 1
+		if frames%10 == 0 {
+			fmt.Printf("Frames: %d\n", frames)
+		}
 
-	// Block forever
-	select {}
+		if ivfErr = videoTrack.WriteSample(media.Sample{Data: frame, Duration: frameDuration}); ivfErr != nil {
+			panic(ivfErr)
+		}
+	}
 }
