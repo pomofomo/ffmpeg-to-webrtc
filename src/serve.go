@@ -18,6 +18,8 @@ type ServerConfig struct {
 	Answers chan string
 	// This is where the server sends offers
 	Offers chan string
+	// directory with static (html) files
+	StaticDir string
 }
 
 func enableCors(w http.ResponseWriter) {
@@ -30,7 +32,12 @@ func HTTPSDPServer(config ServerConfig) {
 	if port == 0 {
 		port = 9999
 	}
+	staticDir := config.StaticDir
+	if staticDir == "" {
+		staticDir = "../html"
+	}
 
+	// out signaling server
 	http.HandleFunc("/connect", func(w http.ResponseWriter, r *http.Request) {
 		enableCors(w)
 		body, _ := io.ReadAll(r.Body)
@@ -38,6 +45,8 @@ func HTTPSDPServer(config ServerConfig) {
 		answer := <-config.Answers
 		w.Write([]byte(answer))
 	})
+	// fallback to static server
+	http.Handle("/", http.FileServer(http.Dir(staticDir)))
 
 	go func() {
 		err := http.ListenAndServe(":"+strconv.Itoa(port), nil) // nolint:gosec
